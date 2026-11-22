@@ -50,10 +50,6 @@ Verbraucherrepos.
 | `quality-gate` | `auto` |
 | `blocking-refs` | `main` |
 | `reference-branch` | `main` (`-Dsonar.newCode.referenceBranch`) |
-| `project-key` | `""` (liest `sonar.projectKey` aus `sonar-project.properties`) |
-| `ce-gate` | `true`, `ce-gate-timeout-seconds` `120`, `ce-gate-poll-seconds` `5` |
-| `retry-date-collision` | `true` |
-| `skip-if-already-scanned` | `true` |
 | `branch-name` | `""` (nutzt `github.ref_name`) |
 | `skip-actors` | `renovate[bot],dependabot[bot]` |
 | `cache` | `true` (`~/.sonar/cache`) |
@@ -114,7 +110,7 @@ Definition nicht pro Analyse setzen, sondern dauerhaft am Branch verankern will,
 über das REST-Endpunkt `POST /api/new_code_periods/set?project=<key>&branch=<branch>&type=REFERENCE_BRANCH&value=main`.
 Das braucht einen Admin-Token; das Analyse-Token des Scanners reicht dafür nicht.
 
-### Abgabe an die Compute Engine
+### Bekannte Störung: Datums-Kollision bei schneller Abfolge
 
 Die Compute Engine arbeitet Berichte pro Projekt sequentiell und verwirft einen Bericht, dessen
 Analyse-Datum älter ist als das des zuletzt gespeicherten:
@@ -125,32 +121,17 @@ ERROR: Validation of project failed:
     Value: "2026-11-22T10:54:49+0000". Latest analysis: "2026-11-22T10:54:53+0000".
 ```
 
-Sichtbar wird das, wenn mehrere Läufe desselben Projekts kurz hintereinander submiten — schnelle
-Folge-Merges auf `main`, Vorschau-Deployment und Branch-Scan desselben Commits, manuelle Runs
-neben automatischen. Die Plugin-Phase des Scanners schwankt zwischen Sekunden und Minuten, welche
-Analyse zuerst submitet ist nicht determiniert. Drei Schritte in der Action halten das sauber:
+Passiert, wenn mehrere Läufe desselben Projekts kurz hintereinander submiteten — Folge-Merges auf
+`main`, Branch-Scan und PR-Scan desselben Commits, manuelle Läufe neben automatischen. Die
+Plugin-Phase des Scanners schwankt zwischen Sekunden und Minuten, welche Analyse zuerst ankommt ist
+nicht determiniert.
 
-1. **Doppelarbeit prüfen** (`skip-if-already-scanned`): hat der Branch seit `github.run_started_at`
-   schon einen erfolgreichen Bericht, entfällt der Scan. Pull Requests werden nie übersprungen,
-   und ein erneuter Lauf desselben Workflows (`github.run_attempt > 1`) auch nicht — sonst wäre ein
-   manueller Re-Run wirkungslos.
-2. **Slot abwarten** (`ce-gate`): vor dem Submit wird `api/ce/component?component=<key>` so lange
-   befragt, bis Queue leer und kein nicht-terminaler Task läuft — längstens
-   `ce-gate-timeout-seconds`. Ein Timeout ist eine Warnung, kein Abbruch.
-3. **Gezielt wiederholen** (`retry-date-collision`): ist der Scan fehlgeschlagen, liest die Action
-   die `errorMessage` des letzten Berichts von `api/ce/activity` und wiederholt den Scan genau dann,
-   wenn die Datums-Kollision drinsteht. Andere Fehler (Plugin-Timeout, Quality Gate) bleiben rot —
-   ein blinder Retry würde sie nur verdoppeln und Load erzeugen.
-
-Der Scanner-Schritt läuft mit `continue-on-error`; sonst könnte der erfolgreiche zweite Versuch den
-Lauf nicht mehr grün machen. Rot gemacht wird der Lauf vom Auswertungsschritt, der ersten Versuch,
-Retry-Bedarf und zweiten Versuch zusammen bewertet.
-
-Alle drei Schritte brauchen den Projekt-Key (`project-key`, sonst `sonar.projectKey` aus
-`sonar-project.properties`) und **Leserecht** auf `api/ce/activity` und `api/ce/component`. Beides
-sind keine Analyse-Endpunkte; ein reines Analyse-Token kann sie sperren. Ist der Server nicht
-erreichbar oder antwortet er mit 401/403, geben die Schritte eine `::warning::` aus und entscheiden
-zugunsten des Scans — die Schritte sind dann wirkungslos, der Lauf aber nicht falsch grün.
+Die Action tut dagegen bewusst nichts: kein Vorab-Polling der CE-Queue, kein Doppelarbeitsschutz,
+kein Retry. Alle drei haben HTTP gegen `api/ce/*` bedeutet (mit Token-Scope-Fragen und Warnungen
+statt Wirkung) und haben damit mehr Oberfläche als Nutzen gebracht. Wirksam ist die Ursache
+weniger Scans: derselbe Commit braucht keine Branch- *und* PR-Analyse, und ein Workflow, der
+push und pull_request auf demselben Branch auslöst, erzeugt genau dieses Duell. Läuft ein Scan mit
+dieser Meldung rot, ist der Re-Run des Jobs der richtige Umgang damit.
 
 ### Betriebswissen zum Server
 
