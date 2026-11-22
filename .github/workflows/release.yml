@@ -32,6 +32,24 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pnpm exec semantic-release
 
+      # semantic-release betrachtet einen gesetzten Tag als veröffentlicht. Scheitert der Lauf
+      # nach dem Tag-Setzen (beobachtet: remote rejected für refs/notes/semantic-release-*),
+      # bleibt ein Tag ohne GitHub-Release zurück und kein Folgellauf repariert das.
+      - name: GitHub-Release für Tag sicherstellen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force origin
+          version=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
+          if [ -z "$version" ]; then
+            exit 0
+          fi
+          if ! gh release view "$version" >/dev/null 2>&1; then
+            gh release create "$version" --target HEAD --generate-notes --verify-tag
+            echo "GitHub-Release $version nachträglich angelegt"
+          fi
+
       - name: Major-Tag nachziehen
         run: |
           set -euo pipefail
