@@ -52,19 +52,28 @@ scope_args() {
   fi
 }
 
-# scanner_args <event> <ref> <pr_number> <pr_head> <pr_base> <version> <timeout> <quality_gate_wait> <extra>
+# scanner_args liest die Konfiguration aus Umgebungsvariablen:
+#   SONAR_EVENT, SONAR_BRANCH, SONAR_PR_NUMBER, SONAR_PR_HEAD, SONAR_PR_BASE,
+#   SONAR_VERSION, SONAR_TIMEOUT, SONAR_GATE_WAIT, SONAR_REFERENCE_BRANCH, SONAR_EXTRA_ARGS
+# Branch-Analysen brauchen sonar.referenceBranch: ohne Referenz fällt SonarQube auf die
+# instanzweit letzte gemeldete Projektversion zurück, und dann gilt alter Code aus main als
+# neuer Code des Vorschau-Branches. Pull Requests bringen die Referenz über pullrequest.base.
 scanner_args() {
-  local out
-  out="$(scope_args "$1" "$2" "$3" "$4" "$5")"
-  out="$out -Dsonar.ws.timeout=$7"
-  if [ "$8" = "true" ]; then
+  local event="${SONAR_EVENT:-}" branch="${SONAR_BRANCH:-}" out
+  out="$(scope_args "$event" "$branch" "${SONAR_PR_NUMBER:-}" "${SONAR_PR_HEAD:-}" "${SONAR_PR_BASE:-}")"
+  out="$out -Dsonar.ws.timeout=${SONAR_TIMEOUT:-180}"
+  if [ "${SONAR_GATE_WAIT:-}" = "true" ]; then
     out="$out -Dsonar.qualitygate.wait=true"
   fi
-  if [ -n "$6" ]; then
-    out="$out -Dsonar.projectVersion=$6"
+  if [ "$event" != "pull_request" ] && [ -n "${SONAR_REFERENCE_BRANCH:-}" ] \
+    && [ "$SONAR_REFERENCE_BRANCH" != "$branch" ]; then
+    out="$out -Dsonar.referenceBranch=$SONAR_REFERENCE_BRANCH"
   fi
-  if [ -n "$9" ]; then
-    out="$out $9"
+  if [ -n "${SONAR_VERSION:-}" ]; then
+    out="$out -Dsonar.projectVersion=$SONAR_VERSION"
+  fi
+  if [ -n "${SONAR_EXTRA_ARGS:-}" ]; then
+    out="$out $SONAR_EXTRA_ARGS"
   fi
   printf '%s' "$out"
 }
