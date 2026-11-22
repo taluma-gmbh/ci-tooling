@@ -28,25 +28,18 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: semantic-release
-        id: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          pnpm exec semantic-release | tee /tmp/release.log
-          if grep -q 'published release' /tmp/release.log; then
-            echo 'released=true' >> "$GITHUB_OUTPUT"
-          fi
+        run: pnpm exec semantic-release
 
       - name: Major-Tag nachziehen
-        if: steps.release.outputs.released == 'true'
         run: |
           set -euo pipefail
-          version=$(grep -oE 'published release.*v[0-9]+\.[0-9]+\.[0-9]+' /tmp/release.log \
-            | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
+          git fetch --tags --force origin
+          version=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
           if [ -z "$version" ]; then
-            echo '::error::Release veröffentlicht, aber die Version konnte nicht aus dem Log gelesen werden.'
-            exit 1
+            echo "Kein neuer Versions-Tag auf HEAD, Major-Tag bleibt unverändert."
+            exit 0
           fi
           major=${version%%.*}
           git tag -f "$major"
