@@ -26,9 +26,14 @@ jobs:
         uses: taluma-gmbh/ci-tooling/.github/actions/sonar-scan@v1
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
+          sonar-host-url: https://sonar.taluma-appserver.de
           project-version: ${{ steps.version.outputs.version }}
           args: -Dsonar.sources=src
 ```
+
+`sonar-token` und `sonar-host-url` sind Pflicht. Beide bleiben im Verbraucherrepos stehen
+(vorzugsweise als Org-Secret bzw. Org-Variable), dieses Repo ist öffentlich und hält deshalb
+keine internen Adressen.
 
 Die Aktion entscheidet selbst, ob gescannt wird: Läufe von `renovate[bot]` und
 `dependabot[bot]` sowie `skip: "true"` überspringen alles inklusive Cache-Schritt.
@@ -40,7 +45,7 @@ Verbraucherrepos.
 
 | Input | Default |
 | --- | --- |
-| `sonar-host-url` | `https://sonar.taluma-appserver.de` |
+| `sonar-host-url` | keine, Pflichteingabe; typisch aus einer Org-Variable |
 | `ws-timeout-seconds` | `180` (Scanner-eigener Default ist 60) |
 | `quality-gate` | `auto` |
 | `blocking-refs` | `main` |

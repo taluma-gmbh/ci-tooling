@@ -12,9 +12,10 @@ inputs:
     required: false
     default: ""
   sonar-host-url:
-    description: Basis-URL des SonarQube-Servers.
-    required: false
-    default: "https://sonar.taluma-appserver.de"
+    description: >
+      Basis-URL des SonarQube-Servers, z. B. aus einer Org-Variable SONAR_HOST_URL. Pflicht, damit
+      die interne Adresse ausschließlich in den Verbraucherrepos steht.
+    required: true
   project-version:
     description: Wert für sonar.projectVersion, z. B. die Version des letzten Release-Tags.
     required: false
