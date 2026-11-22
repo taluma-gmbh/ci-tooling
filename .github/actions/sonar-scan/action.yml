@@ -150,13 +150,26 @@ runs:
         echo "quality_gate_wait=$gate_wait" >> "$GITHUB_OUTPUT"
         echo "Scanner-Argumente ($mode): $args"
 
+    # Der Cache-Schlüssel trägt die Server-Fassung. ~/.sonar/cache hält die Plugin-Jars, und die
+    # passen nicht über ein SonarQube-Upgrade hinweg; der Rest geht als Treffer über die
+    # restore-keys. Fällt der Probe aus, steht «unknown» und der Lauf läuft wie zuvor.
+    - name: Fassung des SonarQube-Servers
+      id: sonar-server
+      if: steps.decide.outputs.scanned == 'true' && inputs.cache == 'true'
+      shell: bash
+      env:
+        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+      run: |
+        source "$GITHUB_ACTION_PATH/sonar-args.sh"
+        echo "version=$(sonar_server_version "$SONAR_HOST_URL")" >> "$GITHUB_OUTPUT"
+
     - name: SonarQube-Scanner zwischenspeichern
       if: steps.decide.outputs.scanned == 'true' && inputs.cache == 'true'
       uses: actions/cache@v6
       with:
         path: ~/.sonar/cache
-        key: ${{ runner.os }}-sonar
-        restore-keys: ${{ runner.os }}-sonar
+        key: ${{ runner.os }}-sonar-${{ steps.sonar-server.outputs.version }}
+        restore-keys: ${{ runner.os }}-sonar-
 
     - name: SonarQube-Scan
       if: steps.decide.outputs.scanned == 'true' && steps.decide.outputs.scanner_mode == 'cli'

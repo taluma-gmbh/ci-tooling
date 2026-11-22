@@ -126,6 +126,19 @@ maven_scan() {
   mvn -B sonar:sonar "${args[@]}"
 }
 
+# sonar_server_version <host> — die Fassung des SonarQube-Servers, für den Cache-Schlüssel des
+# Scanner-Caches. Der Cache liegt unter ~/.sonar/cache und enthält die Plugin-Jars; zieht er nach
+# einem Upgrade des Servers die alte Fassung, analysiert der Scanner gegen eine passende Engine und
+# scheitert an etwas, das der Run nicht beeinflussen kann. Ohne Antwort gilt «unknown»; der Probe
+# darf ein Lauf nicht daran scheitern, dass der Server gerade nicht antwortet.
+sonar_server_version() {
+  local host="${1%/}" version=''
+  if [ -n "$host" ]; then
+    version=$(curl -fsS --max-time 20 "$host/api/server/version" 2>/dev/null) || version=''
+  fi
+  printf '%s' "${version:-unknown}"
+}
+
 # require_token <token> — bricht ab, wenn ein Scan erwartet wird aber kein Token angekommen ist.
 require_token() {
   if [ -z "$1" ]; then
