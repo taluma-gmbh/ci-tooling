@@ -107,34 +107,43 @@ mvn_stub_dir="$(mktemp -d)"
 printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$@"' > "$mvn_stub_dir/mvn"
 chmod +x "$mvn_stub_dir/mvn"
 
+# Token und Host stehen dabei in der Schritt-Umgebung, wie im echten Lauf. Sie dürfen nicht in der
+# Kommandozeile landen — der Prozess ist auf dem Runner für alles einsehbar. Der Maven-Plugin liest
+# SONAR_TOKEN und SONAR_HOST_URL aus der Umgebung; dass er das tut, zeigt der Paritätslauf von
+# erechnung-service, dessen mvn-Aufruf beide ebenfalls nur als Umgebungsvariablen hatte.
 mvn_argv() {
-  (PATH="$mvn_stub_dir:$PATH"; maven_scan "$1" "$2" "$3")
+  (
+    PATH="$mvn_stub_dir:$PATH"
+    export SONAR_TOKEN=squ_stub SONAR_HOST_URL=https://sonar.example
+    maven_scan "$1"
+  )
 }
 
 check "maven ruft den Plugin-Ziel ohne Coordinate auf" \
   "-B
-sonar:sonar
--Dsonar.host.url=https://sonar.example
--Dsonar.token=squ_stub" \
-  "$(mvn_argv squ_stub https://sonar.example '')"
+sonar:sonar" \
+  "$(mvn_argv '')"
 
 check "maven übergibt die Scanner-Argumente einzeln" \
   "-B
 sonar:sonar
--Dsonar.host.url=https://sonar.example
--Dsonar.token=squ_stub
 -Dsonar.branch.name=feat-x
 -Dsonar.language=php" \
-  "$(mvn_argv squ_stub https://sonar.example '-Dsonar.branch.name=feat-x -Dsonar.language=php')"
+  "$(mvn_argv '-Dsonar.branch.name=feat-x -Dsonar.language=php')"
 
 check "maven übernimmt projectKey und projectName aus den Zusatzargumenten" \
   "-B
 sonar:sonar
--Dsonar.host.url=https://sonar.example
--Dsonar.token=squ_stub
 -Dsonar.projectKey=erechnung-service
 -Dsonar.projectName=E-Rechnung Service" \
-  "$(mvn_argv squ_stub https://sonar.example '-Dsonar.projectKey=erechnung-service -Dsonar.projectName="E-Rechnung Service"')"
+  "$(mvn_argv '-Dsonar.projectKey=erechnung-service -Dsonar.projectName="E-Rechnung Service"')"
+
+# Token und Host dürfen nicht in der Kommandozeile stehen, obwohl beide in der Umgebung gesetzt sind.
+if mvn_argv '-Dsonar.branch.name=feat-x' | grep -qE '^-Dsonar\.(token|host\.url)='; then
+  check "maven hält Token und Host aus der Kommandozeile heraus" fail ok
+else
+  check "maven hält Token und Host aus der Kommandozeile heraus" ok ok
+fi
 
 rm -rf "$mvn_stub_dir"
 

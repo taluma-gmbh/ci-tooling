@@ -108,19 +108,18 @@ scanner_mode() {
   esac
 }
 
-# maven_scan <token> <host> <argumentkette> — ruft den SonarScanner über den sonar-maven-Plugin des
-# Projekts auf, im aktuellen Verzeichnis (dem project-dir des Schritts). Der Classpath kommt aus dem
-# Build, den das Projekt selbst ausgeführt hat; die Standalone-CLI kennt ihn nicht.
-# Token und Host werden aus der Umgebung des Aufrufers übergeben und erst hier expandiert.
+# maven_scan <argumentkette> — ruft den SonarScanner über den sonar-maven-Plugin des Projekts auf,
+# im aktuellen Verzeichnis (dem project-dir des Schritts). Der Classpath kommt aus dem Build, den
+# das Projekt selbst ausgeführt hat; die Standalone-CLI kennt ihn nicht.
+# Token und Host bleiben auf der Umgebung des Schritts beschränkt: der Plugin liest SONAR_TOKEN und
+# SONAR_HOST_URL dort, und ein -Dsonar.token im Kommando wäre im Prozessverzeichnis des Runners zu
+# lesen — dasselbe Argument, das den npm-Scanner aus erechnung-client vertrieben hat.
 # Die Plugin-Version steht im pom unter <build><plugins>, nicht auf der Kommandozeile, damit
 # Renovates Maven-Manager sie findet.
 maven_scan() {
   local -a args=()
-  mapfile -t args < <(scanner_words "$3")
-  mvn -B sonar:sonar \
-    "-Dsonar.host.url=$2" \
-    "-Dsonar.token=$1" \
-    "${args[@]}"
+  mapfile -t args < <(scanner_words "$1")
+  mvn -B sonar:sonar "${args[@]}"
 }
 
 # require_token <token> — bricht ab, wenn ein Scan erwartet wird aber kein Token angekommen ist.
