@@ -168,8 +168,9 @@ runs:
         args: ${{ steps.decide.outputs.scanner_args }}
 
     # Der Classpath kommt aus dem laufenden Build, deshalb mvn und nicht die Standalone-CLI.
-    # Token und Host stehen als Umgebungsvariablen und werden in der Klappe expandiert, nicht als
-    # Workflow-Ausdruck in die Skriptzeile geschrieben.
+    # Token und Host stehen nur als Umgebungsvariablen des Schritts da; der Maven-Plugin liest
+    # SONAR_TOKEN und SONAR_HOST_URL dort. Auf der Kommandozeile wäre das Token im Prozessverzeichnis
+    # des Runners lesbar, und im Log stünde es trotz Maskierung als Argument.
     - name: SonarQube-Scan (Maven)
       if: steps.decide.outputs.scanned == 'true' && steps.decide.outputs.scanner_mode == 'maven'
       shell: bash
@@ -180,4 +181,4 @@ runs:
         SCANNER_ARGS: ${{ steps.decide.outputs.scanner_args }}
       run: |
         source "$GITHUB_ACTION_PATH/sonar-args.sh"
-        maven_scan "$SONAR_TOKEN" "$SONAR_HOST_URL" "$SCANNER_ARGS"
+        maven_scan "$SCANNER_ARGS"
