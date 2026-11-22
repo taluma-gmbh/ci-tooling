@@ -47,6 +47,19 @@ check "Timeout überschreibbar, Gate-Wait aus" \
   "-Dsonar.branch.name=main -Dsonar.ws.timeout=30" \
   "$(scanner_args push main '' '' '' '' 30 false '')"
 
+gate() {
+  if quality_gate_blocks "$1" "$2" "$3" "$4"; then echo true; else echo false; fi
+}
+
+check "auto: Pull Request blockiert" true "$(gate pull_request renovate/x auto main)"
+check "auto: main blockiert" true "$(gate push main auto main)"
+check "auto: Vorschau-Branch blockiert nicht" false "$(gate push feat/x auto main)"
+check "auto: weitere blockierende Refs" true "$(gate push develop auto 'main, develop')"
+check "auto: ohne blockierende Refs blockiert kein Push" false "$(gate push main auto '')"
+check "block wartet auch auf Vorschau-Branches" true "$(gate push feat/x block main)"
+check "off wartet nirgends" false "$(gate pull_request renovate/x off main)"
+check "unbekannte Policy folgt auto" false "$(gate push feat/x ungültig main)"
+
 if require_token "" >/dev/null 2>&1; then
   check "leerer Token bricht ab" fail ok
 else

@@ -19,7 +19,30 @@ should_scan() {
   return 0
 }
 
-# scope_args <event_name> <ref_name> <pr_number> <pr_head> <pr_base>
+# quality_gate_blocks <event_name> <ref_name> <policy> <blocking_refs>
+# Policy auto: blockieren nur bei Pull Requests und bei Refs aus blocking_refs.
+# Vorschau-Branches analysieren ohne Gate-Wait, ihre New-Code-Baseline ist nach Merges
+# aus main nicht belastbar; main und PR-Analyse haben sie.
+quality_gate_blocks() {
+  local entry
+  case "$3" in
+    block) return 0 ;;
+    off) return 1 ;;
+  esac
+  if [ "$1" = "pull_request" ]; then
+    return 0
+  fi
+  local IFS=','
+  for entry in $4; do
+    entry="${entry//[[:space:]]/}"
+    if [ -n "$entry" ] && [ "$entry" = "$2" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# scope_args <event_name> <branch_name> <pr_number> <pr_head> <pr_base>
 # Pull Requests werden als PR-Analyse gemeldet, alles andere als Branch-Analyse.
 scope_args() {
   if [ "$1" = "pull_request" ]; then

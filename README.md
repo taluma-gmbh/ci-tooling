@@ -42,13 +42,37 @@ Verbraucherrepos.
 | --- | --- |
 | `sonar-host-url` | `https://sonar.taluma-appserver.de` |
 | `ws-timeout-seconds` | `180` (Scanner-eigener Default ist 60) |
-| `quality-gate-wait` | `true` |
+| `quality-gate` | `auto` |
+| `blocking-refs` | `main` |
+| `branch-name` | `""` (nutzt `github.ref_name`) |
 | `skip-actors` | `renovate[bot],dependabot[bot]` |
 | `cache` | `true` (`~/.sonar/cache`) |
 
 `sonar.ws.timeout` ist der Socket-Timeout des Scanners gegen SonarWeb. Bei 60 s brechen
 Bootstrap-Requests (`api/v2/analysis/version`, `api/rules/search`) schon bei kurzen
 Transport-Störungen ab und der Run wird rot, obwohl der Server die Antwort noch schreibt.
+
+### Quality-Gate-Policy
+
+Das Gate blockiert nur, wo eine belastbare New-Code-Baseline existiert: bei Pull Requests
+(`sonar.pullrequest.*`, Baseline ist die Merge-Base) und bei Pushes auf `blocking-refs`
+(`main`, Baseline ist der Referenz-Branch selbst). Alle anderen Branch-Analysen laufen mit
+`sonar.qualitygate.wait=false`, werden also weiterhin analysiert und berichtet, machen den
+Run aber nicht rot.
+
+Grund: Vorschau-Branches, die `main` per Merge übernehmen, bekommen von SonarQube Zeilen als
+"neuer Code" zugerechnet, die auf `main` längst alt sind. Beobachtet an drei unabhängigen
+Lockfile-Bumps in portfolio-companion, die alle dieselbe Zahl melden:
+
+```text
+Bedingung:      new_coverage = 69.0 ( LT 80 )   -> Gate FAILED
+gemessen:      new_lines_to_cover = 0, new_uncovered_lines = 0
+```
+
+Bei null zu testenden neuen Zeilen kann die Bedingung nicht erfüllen; dieselbe Analyse als
+PR-Analyse meldet `PASSED`. Ein Blockieren auf solchen Branches erzeugt False-Positives, die
+Renovate-PRs unbegrenzt liegen lassen. Mit `quality-gate: block` erzwingt die Wartung das
+alte Verhalten zurück, mit `off` schaltet es ganz ab.
 
 ## Secrets
 
@@ -72,6 +96,36 @@ nicht gegen den Server, sie lintet nur die Action und testet die Argument-Berech
   als `v2` und werden nicht automatisch angenommen.
 - Renovate öffnet in den Verbraucherrepos Update-PRs für die `uses:`-Zeile, sobald hier ein
   neuer Tag entsteht (`github-actions`-Manager aus `config:recommended`).
+
+## Weitere Actions anlegen
+
+Eine neue Aktion ist ein neuer Ordner neben den bestehenden, mit eigenem `action.yml`:
+
+```text
+.github/actions/sonar-scan/{action.yml,sonar-args.sh}
+.github/actions/setup-node-pnpm/action.yml
+```
+
+Verbraucher adressieren den Pfad, nicht das Repo allein:
+
+```yaml
+uses: taluma-gmbh/ci-tooling/.github/actions/setup-node-pnpm@v1
+```
+
+Wichtig dabei:
+
+- Der `ref` (`@v1`) gilt für das **ganze Repo**, nicht pro Ordner. `v1` ist ein Commit-Zeiger,
+  alle Ordner werden zusammen versioniert. Eine neue Aktion erscheint automatisch mit dem
+  nächsten Release, ein eigener Tag pro Ordner ist nicht möglich.
+- Da der `ref` geteilt ist, hebt eine brechende Änderung an einer Aktion den Major für alle.
+  Inputs deshalb nur ergänzend ändern (neue Inputs mit Default), umbenennen oder entfernen
+  ist ein `BREAKING CHANGE`.
+- Der Pfad ist Teil der öffentlichen Schnittstelle: Ordner umbenennen bricht alle Verbraucher.
+- `${{ github.action_path }}` zeigt auf den jeweiligen Ordner, dort liegen ausführbare
+  Begleitdateien wie `sonar-args.sh`. Pro Ordner eine Testdatei unter `test/` anlegen und in
+  `.github/workflows/ci.yml` aufrufen.
+- Ein `action.yml` direkt in der Repo-Wurzel wäre die "eine Aktion pro Repo"-Form und wäre
+  dann mit `uses: taluma-gmbh/ci-tooling@v1` ansprechbar; beides nebeneinander ist möglich.
 
 ## Dieses Repo hält sich selbst aktuell
 
