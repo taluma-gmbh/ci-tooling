@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Version_taggen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Abhängigkeiten installieren
+        run: pnpm install --frozen-lockfile
+
+      - name: semantic-release
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pnpm exec semantic-release | tee /tmp/release.log
+          if grep -q 'published release' /tmp/release.log; then
+            echo 'released=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Major-Tag nachziehen
+        if: steps.release.outputs.released == 'true'
+        run: |
+          set -euo pipefail
+          version=$(grep -oE 'published release.*v[0-9]+\.[0-9]+\.[0-9]+' /tmp/release.log \
+            | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
+          if [ -z "$version" ]; then
+            echo '::error::Release veröffentlicht, aber die Version konnte nicht aus dem Log gelesen werden.'
+            exit 1
+          fi
+          major=${version%%.*}
+          git tag -f "$major"
+          git push -f origin "$major"
+          echo "Tag $major zeigt jetzt auf $version"

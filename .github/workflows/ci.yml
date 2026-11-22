@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Action linten und Logik testen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: actionlint
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work \
+            rhysd/actionlint:1.7.12 -color
+
+      - name: shellcheck
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work --entrypoint sh \
+            koalaman/shellcheck-alpine:v0.11.0 \
+            -c 'shellcheck .github/actions/sonar-scan/sonar-args.sh test/sonar-args.test.sh'
+
+      - name: Argument-Logik testen
+        run: bash test/sonar-args.test.sh

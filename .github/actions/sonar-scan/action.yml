@@ -1,0 +1,104 @@
+name: Taluma SonarQube Scan
+description: >
+  Einheitlicher SonarQube-Scan für taluma-gmbh-Repos: Bot-Läufe werden übersprungen,
+  Branch- oder PR-Parameter werden automatisch gesetzt, Scanner-Cache und Socket-Timeout
+  haben gesetzte Defaults.
+
+inputs:
+  sonar-token:
+    description: >
+      SONAR_TOKEN. Pflicht, sobald der Scan läuft; Composite-Actions erben keine Secrets,
+      das Secret liegt im aufrufenden Repo oder als Org-Secret.
+    required: false
+    default: ""
+  sonar-host-url:
+    description: Basis-URL des SonarQube-Servers.
+    required: false
+    default: "https://sonar.taluma-appserver.de"
+  project-version:
+    description: Wert für sonar.projectVersion, z. B. die Version des letzten Release-Tags.
+    required: false
+    default: ""
+  args:
+    description: Zusätzliche -D-Argumente für den Scanner.
+    required: false
+    default: ""
+  ws-timeout-seconds:
+    description: Socket-Timeout des Scanners gegen SonarWeb in Sekunden. Der Scanner-Default von 60 s führt bei Aussetzern des Weges zum Runner zu roten Runs.
+    required: false
+    default: "180"
+  quality-gate-wait:
+    description: Auf das Quality Gate warten und bei FAIL fehlschlagen.
+    required: false
+    default: "true"
+  skip:
+    description: '"true" überspringt den Scan vollständig.'
+    required: false
+    default: "false"
+  skip-actors:
+    description: Kommagetrennte GitHub-Login-Absender, deren Läufe nicht scannen.
+    required: false
+    default: "renovate[bot],dependabot[bot]"
+  cache:
+    description: '"true" zwischenspeichert Java-Laufzeit und Plugins des Scanners unter ~/.sonar/cache.'
+    required: false
+    default: "true"
+
+outputs:
+  scanned:
+    description: '"true" wenn gescannt wurde, sonst "false".'
+    value: ${{ steps.decide.outputs.scanned }}
+  scanner-args:
+    description: Die tatsächlich übergebenen Scanner-Argumente.
+    value: ${{ steps.decide.outputs.scanner_args }}
+
+runs:
+  using: composite
+  steps:
+    - id: decide
+      name: Scanner-Argumente bestimmen
+      shell: bash
+      env:
+        ACTOR: ${{ github.actor }}
+        EVENT_NAME: ${{ github.event_name }}
+        REF_NAME: ${{ github.ref_name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD: ${{ github.event.pull_request.head.ref }}
+        PR_BASE: ${{ github.event.pull_request.base.ref }}
+        INPUT_SKIP: ${{ inputs.skip }}
+        INPUT_SKIP_ACTORS: ${{ inputs.skip-actors }}
+        INPUT_TIMEOUT: ${{ inputs.ws-timeout-seconds }}
+        INPUT_QUALITY_GATE_WAIT: ${{ inputs.quality-gate-wait }}
+        INPUT_VERSION: ${{ inputs.project-version }}
+        INPUT_ARGS: ${{ inputs.args }}
+        INPUT_TOKEN: ${{ inputs.sonar-token }}
+      run: |
+        source "$GITHUB_ACTION_PATH/sonar-args.sh"
+        if ! should_scan "$ACTOR" "$INPUT_SKIP" "$INPUT_SKIP_ACTORS"; then
+          echo "scanned=false" >> "$GITHUB_OUTPUT"
+          echo "Scan übersprungen (Absender=${ACTOR}, skip=${INPUT_SKIP})."
+          exit 0
+        fi
+        require_token "$INPUT_TOKEN"
+        args="$(scanner_args "$EVENT_NAME" "$REF_NAME" "$PR_NUMBER" "$PR_HEAD" "$PR_BASE" \
+          "$INPUT_VERSION" "$INPUT_TIMEOUT" "$INPUT_QUALITY_GATE_WAIT" "$INPUT_ARGS")"
+        echo "scanned=true" >> "$GITHUB_OUTPUT"
+        echo "scanner_args=$args" >> "$GITHUB_OUTPUT"
+        echo "Scanner-Argumente: $args"
+
+    - name: SonarQube-Scanner zwischenspeichern
+      if: steps.decide.outputs.scanned == 'true' && inputs.cache == 'true'
+      uses: actions/cache@v6
+      with:
+        path: ~/.sonar/cache
+        key: ${{ runner.os }}-sonar
+        restore-keys: ${{ runner.os }}-sonar
+
+    - name: SonarQube-Scan
+      if: steps.decide.outputs.scanned == 'true'
+      uses: SonarSource/sonarqube-scan-action@v8
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+      with:
+        args: ${{ steps.decide.outputs.scanner_args }}
