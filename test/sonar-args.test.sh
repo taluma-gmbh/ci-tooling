@@ -56,7 +56,7 @@ check "Branch-Analyse ohne Referenz" \
   "$(args_for push preview-42 '' '' '' '' 180 false '' '')"
 
 check "Branch-Analyse mit Referenz" \
-  "-Dsonar.branch.name=preview-42 -Dsonar.ws.timeout=180 -Dsonar.referenceBranch=main" \
+  "-Dsonar.branch.name=preview-42 -Dsonar.ws.timeout=180 -Dsonar.newCode.referenceBranch=main" \
   "$(args_for push preview-42 '' '' '' '' 180 false main '')"
 
 check "main bekommt keine eigene Referenz" \
@@ -68,8 +68,60 @@ check "PR-Analyse nutzt pullrequest.base statt Referenz" \
   "$(args_for pull_request renovate/x 42 renovate/x main '' 180 true main '')"
 
 check "Version, Timeout, Referenz und Extra-Argumente" \
-  "-Dsonar.branch.name=feat/x -Dsonar.ws.timeout=90 -Dsonar.referenceBranch=main -Dsonar.projectVersion=1.2.3 -Dsonar.language=php" \
+  "-Dsonar.branch.name=feat/x -Dsonar.ws.timeout=90 -Dsonar.newCode.referenceBranch=main -Dsonar.projectVersion=1.2.3 -Dsonar.language=php" \
   "$(args_for push feat/x '' '' '' 1.2.3 90 false main '-Dsonar.language=php')"
+
+# project_key liest den Key aus der Properties-Datei; die CE-Endpunkte brauchen ihn.
+key_dir=$(mktemp -d)
+printf 'sonar.projectKey=portfolio-companion\nsonar.sources=src\n' > "$key_dir/sonar-project.properties"
+check "project_key aus sonar-project.properties" "portfolio-companion" "$(project_key "$key_dir/sonar-project.properties")"
+printf 'sonar.projectKey = mein-key  \n' > "$key_dir/with-spaces.properties"
+check "project_key ohne Leerzeichen" "mein-key" "$(project_key "$key_dir/with-spaces.properties")"
+check "project_key ohne Datei ist leer" "leer" "$(project_key "$key_dir/unbekannt.properties" >/dev/null 2>&1 && echo vorhan || echo leer)"
+rm -rf "$key_dir"
+
+# ce_slot_free <queue> <current_status>
+ce() {
+  if ce_slot_free "$1" "$2"; then echo true; else echo false; fi
+}
+check "CE frei bei leerer Queue ohne aktuellen Task" true "$(ce 0 '')"
+check "CE frei bei abgeschlossenem aktuellen Task" true "$(ce 0 SUCCESS)"
+check "CE belegt bei laufendem Task" false "$(ce 0 PENDING)"
+check "CE belegt bei wartendem Task" false "$(ce 0 IN_PROGRESS)"
+check "CE belegt bei Einträgen in der Queue" false "$(ce 2 '')"
+check "CE frei bei unlesbarer Queue (Scan gewinnt)" true "$(ce 'x' '')"
+
+# retryable_report_failure <meldung>
+retry() {
+  if retryable_report_failure "$1"; then echo true; else echo false; fi
+}
+check "Datums-Kollision ist wiederholbar" true "$(retry 'Validation of project failed: o Date of analysis cannot be older than the date of the last known analysis on this project.')"
+check "Plugin-Timeout ist nicht wiederholbar" false "$(retry 'java.net.SocketTimeoutException: timeout')"
+check "Leere Meldung ist nicht wiederholbar" false "$(retry '')"
+
+# already_scanned <letztes_submitted_at> <run_started_at> [run_attempt]
+scanned() {
+  if already_scanned "$1" "$2" "${3:-1}"; then echo true; else echo false; fi
+}
+check "Bericht nach Laufbeginn ueberspringt" true "$(scanned '2026-11-22T10:56:23+0000' '2026-11-22T10:54:31Z')"
+check "Bericht vor Laufbeginn scannt" false "$(scanned '2026-11-22T10:50:00+0000' '2026-11-22T10:54:31Z')"
+check "Gleiche Zeit ueberspringt" true "$(scanned '2026-11-22T10:54:31+0000' '2026-11-22T10:54:31Z')"
+check "Ohne Bericht wird gescannt" false "$(scanned '' '2026-11-22T10:54:31Z')"
+check "Ohne Laufstart wird gescannt" false "$(scanned '2026-11-22T10:56:23+0000' '')"
+check "Unlesbarer Zeitstempel scannt" false "$(scanned 'vorher' '2026-11-22T10:54:31Z')"
+check "Erneuter Lauf scannt trotz Bericht" false "$(scanned '2026-11-22T10:56:23+0000' '2026-11-22T10:54:31Z' 2)"
+check "Erster Versuch kann ueberspringen" true "$(scanned '2026-11-22T10:56:23+0000' '2026-11-22T10:54:31Z' 1)"
+
+# scan_needs_report <erster_outcome> <retry_noetig> <zweiter_outcome>
+report() {
+  if scan_needs_report "$1" "$2" "$3"; then echo rot; else echo gruen; fi
+}
+check "Fehlgeschlagener Scan ohne Retry wird rot" rot "$(report failure false skipped)"
+check "Erfolgreicher Scan bleibt gruen" gruen "$(report success false skipped)"
+check "Uebersprungener Scan bleibt gruen" gruen "$(report skipped false skipped)"
+check "Erfolgreiche Wiederholung wird gruen" gruen "$(report failure true success)"
+check "Fehlgeschlagene Wiederholung bleibt rot" rot "$(report failure true failure)"
+check "Ausbleibende Wiederholung bleibt rot" rot "$(report failure true skipped)"
 
 if require_token "" >/dev/null 2>&1; then
   check "leerer Token bricht ab" fail ok

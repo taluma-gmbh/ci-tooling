@@ -49,7 +49,11 @@ Verbraucherrepos.
 | `ws-timeout-seconds` | `180` (Scanner-eigener Default ist 60) |
 | `quality-gate` | `auto` |
 | `blocking-refs` | `main` |
-| `reference-branch` | `main` |
+| `reference-branch` | `main` (`-Dsonar.newCode.referenceBranch`) |
+| `project-key` | `""` (liest `sonar.projectKey` aus `sonar-project.properties`) |
+| `ce-gate` | `true`, `ce-gate-timeout-seconds` `120`, `ce-gate-poll-seconds` `5` |
+| `retry-date-collision` | `true` |
+| `skip-if-already-scanned` | `true` |
 | `branch-name` | `""` (nutzt `github.ref_name`) |
 | `skip-actors` | `renovate[bot],dependabot[bot]` |
 | `cache` | `true` (`~/.sonar/cache`) |
@@ -80,10 +84,14 @@ PR-Analyse meldet `PASSED`. Ein Blockieren auf solchen Branches erzeugt False-Po
 Renovate-PRs unbegrenzt liegen lassen. Mit `quality-gate: block` erzwingt die Wartung das
 alte Verhalten zurück, mit `off` schaltet es ganz ab.
 
+Mit funktionierender New-Code-Definition (siehe unten) ist die Baseline eines Vorschau-Branches
+belastbar; `quality-gate: block` ist dann auch für Branches vertretbar. Nicht blockieren bleibt die
+Default, weil ein Vorschau-Branch kein Merge-Ziel ist und sein Gate keine Entscheidung trifft.
+
 ### New-Code-Definition bei Branch-Analysen
 
-Branch-Analysen erhalten `-Dsonar.referenceBranch=<reference-branch>` (Default `main`), auf dem
-Referenz-Branch selbst entfällt der Parameter. Pull Requests brauchen ihn nicht, deren Referenz
+Branch-Analysen erhalten `-Dsonar.newCode.referenceBranch=<reference-branch>` (Default `main`), auf
+dem Referenz-Branch selbst entfällt der Parameter. Pull Requests brauchen ihn nicht, deren Referenz
 ist `sonar.pullrequest.base`.
 
 Ohne Referenz fällt SonarQube auf die zuletzt gemeldete Projektversion der Instanz zurück
@@ -91,6 +99,71 @@ Ohne Referenz fällt SonarQube auf die zuletzt gemeldete Projektversion der Inst
 dieselbe Ursache wie die falsch bewerteten Gate-Bedingungen oben, und der Grund, warum mehrere
 Vorschau-Branches identische Kennzahlen melden. Mit `reference-branch: ""` lässt sich der
 Parameter abschalten, wenn die New-Code-Definition bewusst über `projectVersion` laufen soll.
+
+Der Property-Name ist ein häufiger Fehler und wird von SonarQube kommentarlos ignoriert. Gemessen
+an SonarQube Community Build 26.10.0.133078 mit je einer Wegwerf-Analyse von `portfolio-companion`
+(Branch danach gelöscht):
+
+| Argument | `api/new_code_periods/show` danach | Gate-Bedingungen |
+| --- | --- | --- |
+| `-Dsonar.referenceBranch=main` | `PREVIOUS_VERSION`, `inherited: true` | — |
+| `-Dsonar.newCode.referenceBranch=main` | `REFERENCE_BRANCH`, `value: "main"` | nur `new_violations`, Gate `OK` |
+
+`sonar.referenceBranch` ist also wirkungslos; die New-Code-Definition bleibt geerbt. Wer die
+Definition nicht pro Analyse setzen, sondern dauerhaft am Branch verankern will, setzt sie einmal
+über das REST-Endpunkt `POST /api/new_code_periods/set?project=<key>&branch=<branch>&type=REFERENCE_BRANCH&value=main`.
+Das braucht einen Admin-Token; das Analyse-Token des Scanners reicht dafür nicht.
+
+### Abgabe an die Compute Engine
+
+Die Compute Engine arbeitet Berichte pro Projekt sequentiell und verwirft einen Bericht, dessen
+Analyse-Datum älter ist als das des zuletzt gespeicherten:
+
+```text
+ERROR: Validation of project failed:
+  o Date of analysis cannot be older than the date of the last known analysis on this project.
+    Value: "2026-11-22T10:54:49+0000". Latest analysis: "2026-11-22T10:54:53+0000".
+```
+
+Sichtbar wird das, wenn mehrere Läufe desselben Projekts kurz hintereinander submiten — schnelle
+Folge-Merges auf `main`, Vorschau-Deployment und Branch-Scan desselben Commits, manuelle Runs
+neben automatischen. Die Plugin-Phase des Scanners schwankt zwischen Sekunden und Minuten, welche
+Analyse zuerst submitet ist nicht determiniert. Drei Schritte in der Action halten das sauber:
+
+1. **Doppelarbeit prüfen** (`skip-if-already-scanned`): hat der Branch seit `github.run_started_at`
+   schon einen erfolgreichen Bericht, entfällt der Scan. Pull Requests werden nie übersprungen,
+   und ein erneuter Lauf desselben Workflows (`github.run_attempt > 1`) auch nicht — sonst wäre ein
+   manueller Re-Run wirkungslos.
+2. **Slot abwarten** (`ce-gate`): vor dem Submit wird `api/ce/component?component=<key>` so lange
+   befragt, bis Queue leer und kein nicht-terminaler Task läuft — längstens
+   `ce-gate-timeout-seconds`. Ein Timeout ist eine Warnung, kein Abbruch.
+3. **Gezielt wiederholen** (`retry-date-collision`): ist der Scan fehlgeschlagen, liest die Action
+   die `errorMessage` des letzten Berichts von `api/ce/activity` und wiederholt den Scan genau dann,
+   wenn die Datums-Kollision drinsteht. Andere Fehler (Plugin-Timeout, Quality Gate) bleiben rot —
+   ein blinder Retry würde sie nur verdoppeln und Load erzeugen.
+
+Der Scanner-Schritt läuft mit `continue-on-error`; sonst könnte der erfolgreiche zweite Versuch den
+Lauf nicht mehr grün machen. Rot gemacht wird der Lauf vom Auswertungsschritt, der ersten Versuch,
+Retry-Bedarf und zweiten Versuch zusammen bewertet.
+
+Alle drei Schritte brauchen den Projekt-Key (`project-key`, sonst `sonar.projectKey` aus
+`sonar-project.properties`) und **Leserecht** auf `api/ce/activity` und `api/ce/component`. Beides
+sind keine Analyse-Endpunkte; ein reines Analyse-Token kann sie sperren. Ist der Server nicht
+erreichbar oder antwortet er mit 401/403, geben die Schritte eine `::warning::` aus und entscheiden
+zugunsten des Scans — die Schritte sind dann wirkungslos, der Lauf aber nicht falsch grün.
+
+### Betriebswissen zum Server
+
+`sonar.taluma-appserver.de` läuft als **Community Build 26.10.0.133078** mit Community-Branch-Plugin
+(Scanner-Log: `com.github.mc1arke.sonarqube.plugin…`). Zwei Folgen, die beide Pipelines treffen:
+
+- Branch- und PR-Analysen existieren überhaupt erst über das Plugin; sein Aufräumen ist
+  unvollständig. Gelöschte Git-Branches und geschlossene PRs hinterlassen Analyse-Einträge für
+  immer. Das ist kein Grund, Branch-Scans abzuschalten — aber ein Grund, die Einträge regelmäßig
+  über `api/project_branches/delete` und `api/project_pull_requests/delete` zu leeren (Admin-Token).
+- Branch-Namen werden vom Plugin bereinigt und gekürzt: aus `renovate/postcss-selector-parser-7.x`
+  wird `renovate-postcss-selector-parser`. API-Vergleiche zwischen Git und SonarQube müssen gegen
+  diese Form prüfen, nicht gegen den Git-Namen.
 
 ## Secrets
 

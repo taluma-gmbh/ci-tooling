@@ -2,7 +2,7 @@ name: Taluma SonarQube Scan
 description: >
   Einheitlicher SonarQube-Scan für taluma-gmbh-Repos: Bot-Läufe werden übersprungen,
   Branch- oder PR-Parameter werden automatisch gesetzt, Scanner-Cache und Socket-Timeout
-  haben gesetzte Defaults.
+  haben gesetzte Defaults, und die Abgabe an die Compute Engine wird koordiniert.
 
 inputs:
   sonar-token:
@@ -42,10 +42,46 @@ inputs:
     default: "main"
   reference-branch:
     description: >
-      Referenz für die New-Code-Definition bei Branch-Analysen (sonar.referenceBranch). Leer stellt
-      den Parameter nicht; ohne ihn nimmt SonarQube die instanzweit letzte Projektversion.
+      Referenz für die New-Code-Definition bei Branch-Analysen (sonar.newCode.referenceBranch).
+      Leer stellt den Parameter nicht; ohne ihn nimmt SonarQube die instanzweit letzte
+      Projektversion, und alter Code aus main gilt als neuer Code des Branches.
     required: false
     default: "main"
+  project-key:
+    description: >
+      Sonar-Projekt-Key für die Compute-Engine-Endpunkte. Leer liest ihn aus
+      sonar-project.properties; ist er auch dort nicht zu finden, entfallen CE-Freigabe,
+      Doppelarbeit-Prüfung und Wiederholungsentscheidung.
+    required: false
+    default: ""
+  ce-gate:
+    description: >
+      "true" wartet vor dem Submit, bis die Compute-Engine-Queue des Projekts leer ist. Zwei
+      Scans desselben Projekts sonst submiteten in beliebiger Reihenfolge, und die Engine verwirft
+      den Bericht mit dem älteren Analyse-Datum.
+    required: false
+    default: "true"
+  ce-gate-timeout-seconds:
+    description: Wie lange die CE-Freigabe maximal wartet; danach wird trotzdem submitet.
+    required: false
+    default: "120"
+  ce-gate-poll-seconds:
+    description: Abstand der CE-Abfragen.
+    required: false
+    default: "5"
+  retry-date-collision:
+    description: >
+      "true" wiederholt den Scan genau dann, wenn die Compute Engine den Bericht wegen
+      "Date of analysis cannot be older" verworfen hat. Andere Fehler bleiben unverändert rot.
+    required: false
+    default: "true"
+  skip-if-already-scanned:
+    description: >
+      "true" überspringt Branch-Scans, deren Branch seit Laufbeginn bereits einen erfolgreichen
+      Bericht abgegeben hat (Doppelarbeit durch zweiten Lauf auf demselben Branch-Schlüssel).
+      Pull Requests und erneute Läufe desselben Workflows werden nie übersprungen.
+    required: false
+    default: "true"
   ws-timeout-seconds:
     description: Socket-Timeout des Scanners gegen SonarWeb in Sekunden. Der Scanner-Default von 60 s führt bei Aussetzern des Weges zum Runner zu roten Runs.
     required: false
@@ -73,6 +109,12 @@ outputs:
   quality-gate-wait:
     description: '"true" wenn der Lauf auf das Quality Gate gewartet hat.'
     value: ${{ steps.decide.outputs.quality_gate_wait }}
+  already_scanned:
+    description: '"true" wenn der Branch seit Laufbeginn bereits erfolgreich analysiert war.'
+    value: ${{ steps.state.outputs.already_scanned }}
+  project_key:
+    description: Der für die Compute-Engine-Abfragen verwendete Projekt-Key (leer wenn unbekannt).
+    value: ${{ steps.state.outputs.project_key }}
 
 runs:
   using: composite
@@ -129,19 +171,165 @@ runs:
         echo "quality_gate_wait=$gate_wait" >> "$GITHUB_OUTPUT"
         echo "Scanner-Argumente: $args"
 
+    # Projekt-Key und bereits abgegebene Berichte: alles, was HTTP gegen SonarQube spricht, hängt
+    # an einem eigenen Schritt. Ein nicht erreichbarer Server darf den Lauf nicht brechen, die
+    # Schritte entscheiden dann zugunsten des Scans.
+    - id: state
+      name: Scan-Zustand bei SonarQube nachschlagen
+      if: steps.decide.outputs.scanned == 'true'
+      shell: bash
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+        EVENT_NAME: ${{ github.event_name }}
+        REF_NAME: ${{ github.ref_name }}
+        INPUT_BRANCH_NAME: ${{ inputs.branch-name }}
+        INPUT_PROJECT_KEY: ${{ inputs.project-key }}
+        INPUT_SKIP_IF_ALREADY_SCANNED: ${{ inputs.skip-if-already-scanned }}
+        RUN_STARTED_AT: ${{ github.run_started_at }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+      run: |
+        source "$GITHUB_ACTION_PATH/sonar-args.sh"
+        branch="$REF_NAME"
+        if [ "$EVENT_NAME" != "pull_request" ] && [ -n "$INPUT_BRANCH_NAME" ]; then
+          branch="$INPUT_BRANCH_NAME"
+        fi
+        key="$INPUT_PROJECT_KEY"
+        if [ -z "$key" ]; then
+          key="$(project_key || true)"
+        fi
+        echo "project_key=$key" >> "$GITHUB_OUTPUT"
+        already=false
+        if [ "$EVENT_NAME" != "pull_request" ] && [ "$INPUT_SKIP_IF_ALREADY_SCANNED" = "true" ] \
+          && [ -n "$key" ]; then
+          answer="$(mktemp)"
+          if ce_get "$SONAR_TOKEN" "$SONAR_HOST_URL" "/api/ce/activity" "$answer" \
+            --data-urlencode "component=$key" \
+            --data-urlencode "branch=$branch" \
+            --data-urlencode "type=REPORT" \
+            --data-urlencode "status=SUCCESS" \
+            --data-urlencode "ps=1"; then
+            last=$(jq -r --arg b "$branch" \
+              '(.tasks[0] // {}) | select((.branch // $b) == $b) | .submittedAt // empty' "$answer" 2>/dev/null) || last=""
+            if [ -n "$last" ] && already_scanned "$last" "$RUN_STARTED_AT" "$RUN_ATTEMPT"; then
+              already=true
+              echo "Branch $branch wurde am $last analysiert, dieser Lauf startete erst um $RUN_STARTED_AT — Scan übersprungen."
+            fi
+          fi
+          rm -f "$answer"
+        fi
+        echo "already_scanned=$already" >> "$GITHUB_OUTPUT"
+
+    - id: cegate
+      name: Compute-Engine-Slot abwarten
+      if: steps.decide.outputs.scanned == 'true' && steps.state.outputs.already_scanned != 'true' && inputs.ce-gate == 'true' && steps.state.outputs.project_key != ''
+      shell: bash
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+        PROJECT_KEY: ${{ steps.state.outputs.project_key }}
+        TIMEOUT: ${{ inputs.ce-gate-timeout-seconds }}
+        POLL: ${{ inputs.ce-gate-poll-seconds }}
+      run: |
+        source "$GITHUB_ACTION_PATH/sonar-args.sh"
+        deadline=$(( $(date +%s) + TIMEOUT ))
+        answer="$(mktemp)"
+        while :; do
+          queue_len=""
+          current=""
+          if ce_get "$SONAR_TOKEN" "$SONAR_HOST_URL" "/api/ce/component" "$answer" \
+            --data-urlencode "component=$PROJECT_KEY"; then
+            queue_len=$(jq -r '(.queue // []) | length' "$answer" 2>/dev/null) || queue_len=""
+            current=$(jq -r '.current.status // empty' "$answer" 2>/dev/null) || current=""
+          fi
+          if ce_slot_free "$queue_len" "$current"; then
+            echo "Compute Engine ist frei (queue=${queue_len:-0}, current=${current:-keiner})."
+            break
+          fi
+          if [ "$(date +%s)" -ge "$deadline" ]; then
+            echo "::warning::Compute Engine nach ${TIMEOUT}s noch belegt (queue=${queue_len:-?}, current=${current:-?}); submitte trotzdem — der Wiederholungsversuch fängt eine Datums-Kollision ab."
+            break
+          fi
+          echo "Warte auf freien Slot in der Compute Engine (queue=${queue_len:-?}, current=${current:-?})."
+          sleep "$POLL"
+        done
+        rm -f "$answer"
+
     - name: SonarQube-Scanner zwischenspeichern
-      if: steps.decide.outputs.scanned == 'true' && inputs.cache == 'true'
+      if: steps.decide.outputs.scanned == 'true' && steps.state.outputs.already_scanned != 'true' && inputs.cache == 'true'
       uses: actions/cache@v6
       with:
         path: ~/.sonar/cache
         key: ${{ runner.os }}-sonar
         restore-keys: ${{ runner.os }}-sonar
 
-    - name: SonarQube-Scan
-      if: steps.decide.outputs.scanned == 'true'
+    - id: scan
+      name: SonarQube-Scan
+      if: steps.decide.outputs.scanned == 'true' && steps.state.outputs.already_scanned != 'true'
+      continue-on-error: true
       uses: SonarSource/sonarqube-scan-action@v8
       env:
         SONAR_TOKEN: ${{ inputs.sonar-token }}
         SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
       with:
         args: ${{ steps.decide.outputs.scanner_args }}
+
+    - id: retry
+      name: Wiederholung nötig?
+      if: always() && steps.scan.outcome == 'failure' && inputs.retry-date-collision == 'true' && steps.state.outputs.project_key != ''
+      shell: bash
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+        PROJECT_KEY: ${{ steps.state.outputs.project_key }}
+        BRANCH: ${{ github.ref_name }}
+        INPUT_BRANCH_NAME: ${{ inputs.branch-name }}
+        EVENT_NAME: ${{ github.event_name }}
+      run: |
+        source "$GITHUB_ACTION_PATH/sonar-args.sh"
+        branch="$BRANCH"
+        [ "$EVENT_NAME" != "pull_request" ] && [ -n "$INPUT_BRANCH_NAME" ] && branch="$INPUT_BRANCH_NAME"
+        message=""
+        answer="$(mktemp)"
+        if ce_get "$SONAR_TOKEN" "$SONAR_HOST_URL" "/api/ce/activity" "$answer" \
+          --data-urlencode "component=$PROJECT_KEY" \
+          --data-urlencode "branch=$branch" \
+          --data-urlencode "type=REPORT" \
+          --data-urlencode "ps=1"; then
+          message=$(jq -r --arg b "$branch" \
+            '(.tasks[0] // {}) | select((.branch // $b) == $b) | .errorMessage // empty' "$answer" 2>/dev/null) || message=""
+        fi
+        rm -f "$answer"
+        if retryable_report_failure "$message"; then
+          echo "retry=true" >> "$GITHUB_OUTPUT"
+          echo "Compute Engine hat den Bericht verworfen: $message"
+        else
+          echo "retry=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    # Gleiche Aktion wie oben, kein zweiter Scanner: identische Fassung, identische Argumente.
+    - id: rescan
+      name: SonarQube-Scan (Wiederholung nach Datums-Kollision)
+      if: always() && steps.retry.outputs.retry == 'true'
+      continue-on-error: true
+      uses: SonarSource/sonarqube-scan-action@v8
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+      with:
+        args: ${{ steps.decide.outputs.scanner_args }}
+
+    # Der Scanner selbst darf den Lauf nicht rot machen (continue-on-error), sonst rettet auch ein
+    # erfolgreicher zweiter Versuch ihn nicht mehr. Hier entscheidet die Auswertung.
+    - name: Scan-Ergebnis bewerten
+      if: always() && steps.decide.outputs.scanned == 'true' && steps.state.outputs.already_scanned != 'true'
+      shell: bash
+      run: |
+        source "$GITHUB_ACTION_PATH/sonar-args.sh"
+        if scan_needs_report '${{ steps.scan.outcome }}' '${{ steps.retry.outputs.retry }}' '${{ steps.rescan.outcome }}'; then
+          echo "::error::SonarQube-Scan fehlgeschlagen. Details im Schritt 'SonarQube-Scan' bzw. im Compute-Engine-Protokoll von Projekt '${{ steps.state.outputs.project_key }}'."
+          exit 1
+        fi
+        if [ '${{ steps.retry.outputs.retry }}' = 'true' ]; then
+          echo "Scan nach Datums-Kollision wiederholt und erfolgreich abgegeben."
+        fi
