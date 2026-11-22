@@ -24,6 +24,18 @@ inputs:
     description: Zusätzliche -D-Argumente für den Scanner.
     required: false
     default: ""
+  scanner:
+    description: >
+      cli lässt die Standalone-CLI von SonarSource/sonarqube-scan-action laufen. maven ruft
+      mvn -B sonar:sonar im project-dir auf, für Projekte, deren Analyse den Classpath des Builds
+      braucht (Java/Maven mit sonar-maven-plugin). Die Plugin-Version steht dazu im pom unter
+      <build><plugins> und nicht auf der Kommandozeile, damit Renovate sie sieht.
+    required: false
+    default: "cli"
+  project-dir:
+    description: Arbeitsverzeichnis für den maven-Modus, relativ zum Workspace des Jobs.
+    required: false
+    default: "."
   branch-name:
     description: >
       Wert für sonar.branch.name. Leer lässt den GitHub-Ref-Namen; nötig für Vorschau-Deployments,
@@ -74,6 +86,9 @@ outputs:
   quality-gate-wait:
     description: '"true" wenn der Lauf auf das Quality Gate gewartet hat.'
     value: ${{ steps.decide.outputs.quality_gate_wait }}
+  scanner-mode:
+    description: 'Die gewählte Scanner-Art: cli oder maven.'
+    value: ${{ steps.decide.outputs.scanner_mode }}
 
 runs:
   using: composite
@@ -93,6 +108,7 @@ runs:
         INPUT_TIMEOUT: ${{ inputs.ws-timeout-seconds }}
         INPUT_VERSION: ${{ inputs.project-version }}
         INPUT_ARGS: ${{ inputs.args }}
+        INPUT_SCANNER: ${{ inputs.scanner }}
         INPUT_BRANCH_NAME: ${{ inputs.branch-name }}
         INPUT_QUALITY_GATE: ${{ inputs.quality-gate }}
         INPUT_BLOCKING_REFS: ${{ inputs.blocking-refs }}
@@ -106,6 +122,9 @@ runs:
           exit 0
         fi
         require_token "$INPUT_TOKEN"
+        if ! mode="$(scanner_mode "$INPUT_SCANNER")"; then
+          exit 1
+        fi
         branch="$REF_NAME"
         if [ "$EVENT_NAME" != "pull_request" ] && [ -n "$INPUT_BRANCH_NAME" ]; then
           branch="$INPUT_BRANCH_NAME"
@@ -127,8 +146,9 @@ runs:
         args="$(scanner_args)"
         echo "scanned=true" >> "$GITHUB_OUTPUT"
         echo "scanner_args=$args" >> "$GITHUB_OUTPUT"
+        echo "scanner_mode=$mode" >> "$GITHUB_OUTPUT"
         echo "quality_gate_wait=$gate_wait" >> "$GITHUB_OUTPUT"
-        echo "Scanner-Argumente: $args"
+        echo "Scanner-Argumente ($mode): $args"
 
     - name: SonarQube-Scanner zwischenspeichern
       if: steps.decide.outputs.scanned == 'true' && inputs.cache == 'true'
@@ -139,10 +159,25 @@ runs:
         restore-keys: ${{ runner.os }}-sonar
 
     - name: SonarQube-Scan
-      if: steps.decide.outputs.scanned == 'true'
+      if: steps.decide.outputs.scanned == 'true' && steps.decide.outputs.scanner_mode == 'cli'
       uses: SonarSource/sonarqube-scan-action@v8
       env:
         SONAR_TOKEN: ${{ inputs.sonar-token }}
         SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
       with:
         args: ${{ steps.decide.outputs.scanner_args }}
+
+    # Der Classpath kommt aus dem laufenden Build, deshalb mvn und nicht die Standalone-CLI.
+    # Token und Host stehen als Umgebungsvariablen und werden in der Klappe expandiert, nicht als
+    # Workflow-Ausdruck in die Skriptzeile geschrieben.
+    - name: SonarQube-Scan (Maven)
+      if: steps.decide.outputs.scanned == 'true' && steps.decide.outputs.scanner_mode == 'maven'
+      shell: bash
+      working-directory: ${{ inputs.project-dir }}
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+        SCANNER_ARGS: ${{ steps.decide.outputs.scanner_args }}
+      run: |
+        source "$GITHUB_ACTION_PATH/sonar-args.sh"
+        maven_scan "$SONAR_TOKEN" "$SONAR_HOST_URL" "$SCANNER_ARGS"

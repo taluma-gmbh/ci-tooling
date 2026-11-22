@@ -83,6 +83,46 @@ scanner_args() {
   printf '%s' "$out"
 }
 
+# scanner_words <argumentkette> — ein Argument pro Zeile, Anführungszeichen fassen Werte mit
+# Leerzeichen zusammen. Der maven-Zweig liest die Zeilen in ein Feld und übergibt sie als einzelne
+# Argumente; eine reine Leerzeichen-Zerlegung würde «-Dsonar.projectName="E-Rechnung Service"»
+# in zwei Argumente teilen und stillschweigend ein abgeschnittenes Projekt erzeugen.
+scanner_words() {
+  [ -n "${1//[[:space:]]/}" ] || return 0
+  printf '%s' "$1" | xargs -r -n1 printf '%s\n'
+}
+
+# scanner_mode <scanner> — normalisiert die Scanner-Art; unbekannte Werte sind ein Konfigurationsfehler.
+# Der Modus wählt ausschließlich den Aufruf, die Argumente bleiben dieselben. maven ist für
+# Projekte, deren Analyse den Classpath des Builds braucht (Java/Maven): die Standalone-CLI sieht
+# ihn nicht und schaltet Java-Regeln still ab, das Gate bleibt grün.
+# Die Fehlermeldung geht nach stderr, damit sie ein Aufrufer mit $(scanner_mode ...) nicht einfängt.
+scanner_mode() {
+  case "$1" in
+    ''|cli) printf 'cli' ;;
+    maven) printf 'maven' ;;
+    *)
+      echo "::error::scanner muss cli oder maven sein, erhalten: $1" >&2
+      return 1
+      ;;
+  esac
+}
+
+# maven_scan <token> <host> <argumentkette> — ruft den SonarScanner über den sonar-maven-Plugin des
+# Projekts auf, im aktuellen Verzeichnis (dem project-dir des Schritts). Der Classpath kommt aus dem
+# Build, den das Projekt selbst ausgeführt hat; die Standalone-CLI kennt ihn nicht.
+# Token und Host werden aus der Umgebung des Aufrufers übergeben und erst hier expandiert.
+# Die Plugin-Version steht im pom unter <build><plugins>, nicht auf der Kommandozeile, damit
+# Renovates Maven-Manager sie findet.
+maven_scan() {
+  local -a args=()
+  mapfile -t args < <(scanner_words "$3")
+  mvn -B sonar:sonar \
+    "-Dsonar.host.url=$2" \
+    "-Dsonar.token=$1" \
+    "${args[@]}"
+}
+
 # require_token <token> — bricht ab, wenn ein Scan erwartet wird aber kein Token angekommen ist.
 require_token() {
   if [ -z "$1" ]; then
