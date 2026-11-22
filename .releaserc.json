@@ -6,8 +6,8 @@
     [
       "@semantic-release/github",
       {
-        "successCommentCondition": "false",
-        "failCommentCondition": "false",
+        "successCommentCondition": false,
+        "failCommentCondition": false,
         "releasedLabels": false
       }
     ]
