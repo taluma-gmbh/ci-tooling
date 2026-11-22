@@ -46,7 +46,7 @@ jobs:
             exit 0
           fi
           if ! gh release view "$version" >/dev/null 2>&1; then
-            gh release create "$version" --target HEAD --generate-notes --verify-tag
+            gh release create "$version" --target "$(git rev-parse HEAD)" --generate-notes --verify-tag
             echo "GitHub-Release $version nachträglich angelegt"
           fi
 
