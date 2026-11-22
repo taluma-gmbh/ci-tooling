@@ -54,13 +54,19 @@ Verbraucherrepos.
 | `scanner` | `cli` (Alternativwert `maven`) |
 | `project-dir` | `.` (Arbeitsverzeichnis im `maven`-Modus) |
 | `skip-actors` | `renovate[bot],dependabot[bot]` |
-| `cache` | `true` (`~/.sonar/cache`) |
+| `cache` | `true` (`~/.sonar/cache`, Schlüssel `⟨OS⟩-sonar-⟨Serverfassung⟩`) |
 
 `sonar.scanner.socketTimeout` ist der Socket-Timeout des Scanners gegen SonarWeb, in Sekunden. Bei
 dem Default von 60 s brechen Bootstrap-Requests (`api/v2/analysis/version`, `api/rules/search`)
 schon bei kurzen Transport-Störungen ab und der Run wird rot, obwohl der Server die Antwort noch
 schreibt. Das ältere `sonar.ws.timeout` ist nur der Fallback dahinter — beide liest dieselbe Stelle
 in `HttpConfig` der `sonar-scanner-java-library`, gesetzt wird deshalb ausschließlich der neue Name.
+
+Der Scanner-Cache liegt unter `~/.sonar/cache` und enthält die Plugin-Jars des Servers. Sein
+Schlüssel trägt deshalb die Serverfassung aus `GET /api/server/version`: nach einem SonarQube-Upgrade
+zöge ein Schlüssel ohne Fassung die Jars der alten Fassung wieder her, und der Scan scheitert an
+Dateien, auf die der Run keinen Einfluss hat. Antwortet der Server nicht, steht `unknown` im Schlüssel —
+dann fehlt der Cache-Treffer, aber der Lauf läuft wie zuvor.
 
 ### Quality-Gate-Policy
 

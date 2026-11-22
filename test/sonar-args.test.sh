@@ -112,11 +112,11 @@ chmod +x "$mvn_stub_dir/mvn"
 # SONAR_TOKEN und SONAR_HOST_URL aus der Umgebung; dass er das tut, zeigt der Paritätslauf von
 # erechnung-service, dessen mvn-Aufruf beide ebenfalls nur als Umgebungsvariablen hatte.
 mvn_argv() {
-  (
-    PATH="$mvn_stub_dir:$PATH"
-    export SONAR_TOKEN=squ_stub SONAR_HOST_URL=https://sonar.example
-    maven_scan "$1"
-  )
+  # local -x statt Subshell: die Umgebung gilt nur für diesen Aufruf, und shellcheck sieht die
+  # PATH-Änderung nicht als Verlust über eine Klammergruppe.
+  local -x PATH="$mvn_stub_dir:$PATH"
+  local -x SONAR_TOKEN=squ_stub SONAR_HOST_URL=https://sonar.example
+  maven_scan "$1"
 }
 
 check "maven ruft den Plugin-Ziel ohne Coordinate auf" \
@@ -146,6 +146,32 @@ else
 fi
 
 rm -rf "$mvn_stub_dir"
+
+# Der Cache-Schlüssel hängt an der Serverfassung, also an einem Netzwerkaufruf. Der vorgeschobene
+# curl zeigt beide Zweige — Antwort und Ausfall — ohne Server.
+curl_stub_dir="$(mktemp -d)"
+# shellcheck disable=SC2016  # ${CURL_STUB} soll der Stub selbst lesen, nicht dieser Aufruf
+printf '%s\n' '#!/usr/bin/env bash' 'case "${CURL_STUB:-ok}" in' '  ok) printf "26.10.0.133078" ;;' '  *) exit 22 ;;' 'esac' > "$curl_stub_dir/curl"
+chmod +x "$curl_stub_dir/curl"
+
+probe() {
+  local -x PATH="$curl_stub_dir:$PATH"
+  local -x CURL_STUB="$1"
+  sonar_server_version "$2"
+}
+
+check "sonar_server_version liefert die Serverfassung" \
+  "26.10.0.133078" "$(probe ok https://sonar.example)"
+
+check "sonar_server_version fällt bei Ausfall auf unknown" \
+  "unknown" "$(probe kaputt https://sonar.example)"
+
+# Der «ok»-Stub würde eine Fassung liefern; unknown beweist, dass ohne Host gar nicht erst
+# angefragt wird.
+check "sonar_server_version ohne Host bleibt bei unknown" \
+  "unknown" "$(probe ok '')"
+
+rm -rf "$curl_stub_dir"
 
 
 if require_token "" >/dev/null 2>&1; then
