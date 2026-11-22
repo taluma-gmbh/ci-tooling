@@ -29,6 +29,12 @@ gate() {
   if quality_gate_blocks "$1" "$2" "$3" "$4"; then echo true; else echo false; fi
 }
 
+# mode <scanner> — normalisierter Modus oder "Fehler" bei einer unbekannten Angabe.
+mode() {
+  local out
+  if out="$(scanner_mode "$1" 2>/dev/null)"; then echo "$out"; else echo Fehler; fi
+}
+
 # args_for <event> <branch> <pr_number> <pr_head> <pr_base> <version> <timeout> <gate_wait> <reference_branch> <extra>
 args_for() {
   SONAR_EVENT="$1" SONAR_BRANCH="$2" SONAR_PR_NUMBER="$3" SONAR_PR_HEAD="$4" SONAR_PR_BASE="$5" \
@@ -70,6 +76,67 @@ check "PR-Analyse nutzt pullrequest.base statt Referenz" \
 check "Version, Timeout, Referenz und Extra-Argumente" \
   "-Dsonar.branch.name=feat/x -Dsonar.ws.timeout=90 -Dsonar.newCode.referenceBranch=main -Dsonar.projectVersion=1.2.3 -Dsonar.language=php" \
   "$(args_for push feat/x '' '' '' 1.2.3 90 false main '-Dsonar.language=php')"
+
+# Der Modus wählt nur den Aufruf (CLI oder mvn sonar:sonar), die Argumente bleiben dieselben.
+check "scanner-Leerwert fällt auf cli zurück" cli "$(mode '')"
+check "scanner: cli" cli "$(mode cli)"
+check "scanner: maven" maven "$(mode maven)"
+check "unbekannter Modus scheitert" Fehler "$(mode gradle)"
+check "Großbuchstaben sind kein Modus" Fehler "$(mode Maven)"
+
+# Der Token gehört in keine Mode in die Argumente: im maven-Zweig kommt er aus der Umgebung.
+check "Scanner-Argumente enthalten keinen Token" \
+  "-Dsonar.branch.name=main -Dsonar.ws.timeout=180 -Dsonar.qualitygate.wait=true" \
+  "$(args_for push main '' '' '' '' 180 true main '')"
+
+# Die Wortzerlegung übergibt jedes Argument einzeln; Anführungszeichen fassen Werte mit Leerzeichen.
+check "Wortzerlegung trennt einfache Argumente" \
+  $'-Dsonar.sources=api,classes\n-Dsonar.language=php' \
+  "$(scanner_words '-Dsonar.sources=api,classes -Dsonar.language=php')"
+
+check "Wert mit Leerzeichen bleibt ein Argument" \
+  '-Dsonar.projectName=E-Rechnung Service' \
+  "$(scanner_words '-Dsonar.projectName="E-Rechnung Service"')"
+
+check "Leere Argumentkette erzeugt kein Argument" "" "$(scanner_words '')"
+check "Blosse Leerzeichen erzeugen kein Argument" "" "$(scanner_words '   ')"
+
+# Der maven-Zweig mit einem vorgeschobenen mvn, das nur seine Argumente ausgibt: so sieht der Test
+# den Aufruf, den die Aktion wirklich baut, ohne Maven und ohne Netzwerk.
+mvn_stub_dir="$(mktemp -d)"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$@"' > "$mvn_stub_dir/mvn"
+chmod +x "$mvn_stub_dir/mvn"
+
+mvn_argv() {
+  (PATH="$mvn_stub_dir:$PATH"; maven_scan "$1" "$2" "$3")
+}
+
+check "maven ruft den Plugin-Ziel ohne Coordinate auf" \
+  "-B
+sonar:sonar
+-Dsonar.host.url=https://sonar.example
+-Dsonar.token=squ_stub" \
+  "$(mvn_argv squ_stub https://sonar.example '')"
+
+check "maven übergibt die Scanner-Argumente einzeln" \
+  "-B
+sonar:sonar
+-Dsonar.host.url=https://sonar.example
+-Dsonar.token=squ_stub
+-Dsonar.branch.name=feat-x
+-Dsonar.language=php" \
+  "$(mvn_argv squ_stub https://sonar.example '-Dsonar.branch.name=feat-x -Dsonar.language=php')"
+
+check "maven übernimmt projectKey und projectName aus den Zusatzargumenten" \
+  "-B
+sonar:sonar
+-Dsonar.host.url=https://sonar.example
+-Dsonar.token=squ_stub
+-Dsonar.projectKey=erechnung-service
+-Dsonar.projectName=E-Rechnung Service" \
+  "$(mvn_argv squ_stub https://sonar.example '-Dsonar.projectKey=erechnung-service -Dsonar.projectName="E-Rechnung Service"')"
+
+rm -rf "$mvn_stub_dir"
 
 
 if require_token "" >/dev/null 2>&1; then

@@ -26,14 +26,14 @@ jobs:
         uses: taluma-gmbh/ci-tooling/.github/actions/sonar-scan@v1
         with:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
-          sonar-host-url: https://sonar.taluma-appserver.de
+          sonar-host-url: ${{ vars.SONAR_HOST_URL }}
           project-version: ${{ steps.version.outputs.version }}
           args: -Dsonar.sources=src
 ```
 
-`sonar-token` und `sonar-host-url` sind Pflicht. Beide bleiben im Verbraucherrepos stehen
-(vorzugsweise als Org-Secret bzw. Org-Variable), dieses Repo ist öffentlich und hält deshalb
-keine internen Adressen.
+`sonar-token` und `sonar-host-url` sind Pflicht. Beide bleiben im Verbraucherrepos stehen, als
+Org-Secret `SONAR_TOKEN` und Org-Variable `SONAR_HOST_URL`; dieses Repo ist öffentlich und hält
+deshalb keine internen Adressen, auch nicht in Beispielen.
 
 Die Aktion entscheidet selbst, ob gescannt wird: Läufe von `renovate[bot]` und
 `dependabot[bot]` sowie `skip: "true"` überspringen alles inklusive Cache-Schritt.
@@ -51,6 +51,8 @@ Verbraucherrepos.
 | `blocking-refs` | `main` |
 | `reference-branch` | `main` (`-Dsonar.newCode.referenceBranch`) |
 | `branch-name` | `""` (nutzt `github.ref_name`) |
+| `scanner` | `cli` (Alternativwert `maven`) |
+| `project-dir` | `.` (Arbeitsverzeichnis im `maven`-Modus) |
 | `skip-actors` | `renovate[bot],dependabot[bot]` |
 | `cache` | `true` (`~/.sonar/cache`) |
 
@@ -110,6 +112,42 @@ Definition nicht pro Analyse setzen, sondern dauerhaft am Branch verankern will,
 über das REST-Endpunkt `POST /api/new_code_periods/set?project=<key>&branch=<branch>&type=REFERENCE_BRANCH&value=main`.
 Das braucht einen Admin-Token; das Analyse-Token des Scanners reicht dafür nicht.
 
+### Maven-Projekte: `scanner: maven`
+
+Java-Projekte, deren Analyse den Classpath des Builds braucht, laufen nicht über die
+Standalone-CLI. Die sieht den von Maven aufgebauten Classpath nicht, ihre Java-Regeln schalten
+still ab und das Gate bleibt grün — ein Scan ohne Wirkung. Für sie ruft die Aktion den Scanner als
+Plugin des Projekts auf:
+
+```yaml
+- name: SonarQube-Scan
+  uses: taluma-gmbh/ci-tooling/.github/actions/sonar-scan@v1
+  with:
+    sonar-token: ${{ secrets.SONAR_TOKEN }}
+    sonar-host-url: ${{ vars.SONAR_HOST_URL }}
+    scanner: maven
+    project-dir: .
+    args: -Dsonar.projectKey=erechnung-service
+```
+
+Der Schritt führt `mvn -B sonar:sonar` im `project-dir` aus, mit denselben Argumenten wie im
+`cli`-Modus; Token und Host kommen aus der Umgebung des Schritts. Zwei Bedingungen liegen im
+Verbraucherrepos:
+
+- Die Plugin-Version steht im pom unter `<build><plugins>`, nicht auf der Kommandozeile — nur so
+  sieht Renovates Maven-Manager sie und hält den Scanner aktuell:
+
+  ```xml
+  <plugin>
+    <groupId>org.sonarsource.scanner.maven</groupId>
+    <artifactId>sonar-maven-plugin</artifactId>
+    <version>5.0.0.4389</version>
+  </plugin>
+  ```
+
+- Vor dem Scan muss `mvn package` (oder vergleichbar) gelaufen sein: `sonar:sonar` analysiert die
+  Klassen im `target`-Verzeichnis und deckt sonst nichts ab.
+
 ### Bekannte Störung: Datums-Kollision bei schneller Abfolge
 
 Die Compute Engine arbeitet Berichte pro Projekt sequentiell und verwirft einen Bericht, dessen
@@ -135,8 +173,9 @@ dieser Meldung rot, ist der Re-Run des Jobs der richtige Umgang damit.
 
 ### Betriebswissen zum Server
 
-`sonar.taluma-appserver.de` läuft als **Community Build 26.10.0.133078** mit Community-Branch-Plugin
-(Scanner-Log: `com.github.mc1arke.sonarqube.plugin…`). Zwei Folgen, die beide Pipelines treffen:
+Der Server hinter der Org-Variable `SONAR_HOST_URL` läuft als **Community Build 26.10.0.133078** mit
+Community-Branch-Plugin (Scanner-Log: `com.github.mc1arke.sonarqube.plugin…`). Zwei Folgen, die
+beide Pipelines treffen:
 
 - Branch- und PR-Analysen existieren überhaupt erst über das Plugin; sein Aufräumen ist
   unvollständig. Gelöschte Git-Branches und geschlossene PRs hinterlassen Analyse-Einträge für
