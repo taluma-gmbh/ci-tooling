@@ -58,23 +58,23 @@ check "off wartet nirgends" false "$(gate pull_request renovate/x off main)"
 check "unbekannte Policy folgt auto" false "$(gate push feat/x ungültig main)"
 
 check "Branch-Analyse ohne Referenz" \
-  "-Dsonar.branch.name=preview-42 -Dsonar.ws.timeout=180" \
+  "-Dsonar.branch.name=preview-42 -Dsonar.scanner.socketTimeout=180" \
   "$(args_for push preview-42 '' '' '' '' 180 false '' '')"
 
 check "Branch-Analyse mit Referenz" \
-  "-Dsonar.branch.name=preview-42 -Dsonar.ws.timeout=180 -Dsonar.newCode.referenceBranch=main" \
+  "-Dsonar.branch.name=preview-42 -Dsonar.scanner.socketTimeout=180 -Dsonar.newCode.referenceBranch=main" \
   "$(args_for push preview-42 '' '' '' '' 180 false main '')"
 
 check "main bekommt keine eigene Referenz" \
-  "-Dsonar.branch.name=main -Dsonar.ws.timeout=180 -Dsonar.qualitygate.wait=true" \
+  "-Dsonar.branch.name=main -Dsonar.scanner.socketTimeout=180 -Dsonar.qualitygate.wait=true" \
   "$(args_for push main '' '' '' '' 180 true main '')"
 
 check "PR-Analyse nutzt pullrequest.base statt Referenz" \
-  "-Dsonar.pullrequest.key=42 -Dsonar.pullrequest.branch=renovate/x -Dsonar.pullrequest.base=main -Dsonar.ws.timeout=180 -Dsonar.qualitygate.wait=true" \
+  "-Dsonar.pullrequest.key=42 -Dsonar.pullrequest.branch=renovate/x -Dsonar.pullrequest.base=main -Dsonar.scanner.socketTimeout=180 -Dsonar.qualitygate.wait=true" \
   "$(args_for pull_request renovate/x 42 renovate/x main '' 180 true main '')"
 
 check "Version, Timeout, Referenz und Extra-Argumente" \
-  "-Dsonar.branch.name=feat/x -Dsonar.ws.timeout=90 -Dsonar.newCode.referenceBranch=main -Dsonar.projectVersion=1.2.3 -Dsonar.language=php" \
+  "-Dsonar.branch.name=feat/x -Dsonar.scanner.socketTimeout=90 -Dsonar.newCode.referenceBranch=main -Dsonar.projectVersion=1.2.3 -Dsonar.language=php" \
   "$(args_for push feat/x '' '' '' 1.2.3 90 false main '-Dsonar.language=php')"
 
 # Der Modus wählt nur den Aufruf (CLI oder mvn sonar:sonar), die Argumente bleiben dieselben.
@@ -86,7 +86,7 @@ check "Großbuchstaben sind kein Modus" Fehler "$(mode Maven)"
 
 # Der Token gehört in keine Mode in die Argumente: im maven-Zweig kommt er aus der Umgebung.
 check "Scanner-Argumente enthalten keinen Token" \
-  "-Dsonar.branch.name=main -Dsonar.ws.timeout=180 -Dsonar.qualitygate.wait=true" \
+  "-Dsonar.branch.name=main -Dsonar.scanner.socketTimeout=180 -Dsonar.qualitygate.wait=true" \
   "$(args_for push main '' '' '' '' 180 true main '')"
 
 # Die Wortzerlegung übergibt jedes Argument einzeln; Anführungszeichen fassen Werte mit Leerzeichen.

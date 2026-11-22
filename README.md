@@ -46,7 +46,7 @@ Verbraucherrepos.
 | Input | Default |
 | --- | --- |
 | `sonar-host-url` | keine, Pflichteingabe; typisch aus einer Org-Variable |
-| `ws-timeout-seconds` | `180` (Scanner-eigener Default ist 60) |
+| `socket-timeout-seconds` | `180` (Scanner-eigener Default ist 60) |
 | `quality-gate` | `auto` |
 | `blocking-refs` | `main` |
 | `reference-branch` | `main` (`-Dsonar.newCode.referenceBranch`) |
@@ -56,9 +56,11 @@ Verbraucherrepos.
 | `skip-actors` | `renovate[bot],dependabot[bot]` |
 | `cache` | `true` (`~/.sonar/cache`) |
 
-`sonar.ws.timeout` ist der Socket-Timeout des Scanners gegen SonarWeb. Bei 60 s brechen
-Bootstrap-Requests (`api/v2/analysis/version`, `api/rules/search`) schon bei kurzen
-Transport-Störungen ab und der Run wird rot, obwohl der Server die Antwort noch schreibt.
+`sonar.scanner.socketTimeout` ist der Socket-Timeout des Scanners gegen SonarWeb, in Sekunden. Bei
+dem Default von 60 s brechen Bootstrap-Requests (`api/v2/analysis/version`, `api/rules/search`)
+schon bei kurzen Transport-Störungen ab und der Run wird rot, obwohl der Server die Antwort noch
+schreibt. Das ältere `sonar.ws.timeout` ist nur der Fallback dahinter — beide liest dieselbe Stelle
+in `HttpConfig` der `sonar-scanner-java-library`, gesetzt wird deshalb ausschließlich der neue Name.
 
 ### Quality-Gate-Policy
 

@@ -59,7 +59,7 @@ inputs:
       Projektversion, und alter Code aus main gilt als neuer Code des Branches.
     required: false
     default: "main"
-  ws-timeout-seconds:
+  socket-timeout-seconds:
     description: Socket-Timeout des Scanners gegen SonarWeb in Sekunden. Der Scanner-Default von 60 s führt bei Aussetzern des Weges zum Runner zu roten Runs.
     required: false
     default: "180"
@@ -105,7 +105,7 @@ runs:
         PR_BASE: ${{ github.event.pull_request.base.ref }}
         INPUT_SKIP: ${{ inputs.skip }}
         INPUT_SKIP_ACTORS: ${{ inputs.skip-actors }}
-        INPUT_TIMEOUT: ${{ inputs.ws-timeout-seconds }}
+        INPUT_TIMEOUT: ${{ inputs.socket-timeout-seconds }}
         INPUT_VERSION: ${{ inputs.project-version }}
         INPUT_ARGS: ${{ inputs.args }}
         INPUT_SCANNER: ${{ inputs.scanner }}

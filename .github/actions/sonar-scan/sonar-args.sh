@@ -66,7 +66,11 @@ scope_args() {
 scanner_args() {
   local event="${SONAR_EVENT:-}" branch="${SONAR_BRANCH:-}" out
   out="$(scope_args "$event" "$branch" "${SONAR_PR_NUMBER:-}" "${SONAR_PR_HEAD:-}" "${SONAR_PR_BASE:-}")"
-  out="$out -Dsonar.ws.timeout=${SONAR_TIMEOUT:-180}"
+  # Socket-Timeout gegen SonarWeb. Der Scanner liest ihn aus sonar.scanner.socketTimeout; das
+  # ältere sonar.ws.timeout ist davon nur der Fallback und meldet bei jedem Lauf eine
+  # Deprecation-Warnung. Beide werden von derselben Stelle in Sekunden geparst
+  # (sonar-scanner-java-library, HttpConfig.loadDuration), der Wert ist also identisch.
+  out="$out -Dsonar.scanner.socketTimeout=${SONAR_TIMEOUT:-180}"
   if [ "${SONAR_GATE_WAIT:-}" = "true" ]; then
     out="$out -Dsonar.qualitygate.wait=true"
   fi
