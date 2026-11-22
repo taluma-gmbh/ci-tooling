@@ -39,6 +39,12 @@ inputs:
     description: Kommagetrennte Refs, deren Push-Läufe auf das Quality Gate warten.
     required: false
     default: "main"
+  reference-branch:
+    description: >
+      Referenz für die New-Code-Definition bei Branch-Analysen (sonar.referenceBranch). Leer stellt
+      den Parameter nicht; ohne ihn nimmt SonarQube die instanzweit letzte Projektversion.
+    required: false
+    default: "main"
   ws-timeout-seconds:
     description: Socket-Timeout des Scanners gegen SonarWeb in Sekunden. Der Scanner-Default von 60 s führt bei Aussetzern des Weges zum Runner zu roten Runs.
     required: false
@@ -88,6 +94,7 @@ runs:
         INPUT_BRANCH_NAME: ${{ inputs.branch-name }}
         INPUT_QUALITY_GATE: ${{ inputs.quality-gate }}
         INPUT_BLOCKING_REFS: ${{ inputs.blocking-refs }}
+        INPUT_REFERENCE_BRANCH: ${{ inputs.reference-branch }}
         INPUT_TOKEN: ${{ inputs.sonar-token }}
       run: |
         source "$GITHUB_ACTION_PATH/sonar-args.sh"
@@ -105,8 +112,17 @@ runs:
         if quality_gate_blocks "$EVENT_NAME" "$REF_NAME" "$INPUT_QUALITY_GATE" "$INPUT_BLOCKING_REFS"; then
           gate_wait=true
         fi
-        args="$(scanner_args "$EVENT_NAME" "$branch" "$PR_NUMBER" "$PR_HEAD" "$PR_BASE" \
-          "$INPUT_VERSION" "$INPUT_TIMEOUT" "$gate_wait" "$INPUT_ARGS")"
+        export SONAR_EVENT="$EVENT_NAME"
+        export SONAR_BRANCH="$branch"
+        export SONAR_PR_NUMBER="$PR_NUMBER"
+        export SONAR_PR_HEAD="$PR_HEAD"
+        export SONAR_PR_BASE="$PR_BASE"
+        export SONAR_VERSION="$INPUT_VERSION"
+        export SONAR_TIMEOUT="$INPUT_TIMEOUT"
+        export SONAR_GATE_WAIT="$gate_wait"
+        export SONAR_REFERENCE_BRANCH="$INPUT_REFERENCE_BRANCH"
+        export SONAR_EXTRA_ARGS="$INPUT_ARGS"
+        args="$(scanner_args)"
         echo "scanned=true" >> "$GITHUB_OUTPUT"
         echo "scanner_args=$args" >> "$GITHUB_OUTPUT"
         echo "quality_gate_wait=$gate_wait" >> "$GITHUB_OUTPUT"
