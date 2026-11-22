@@ -44,6 +44,7 @@ Verbraucherrepos.
 | `ws-timeout-seconds` | `180` (Scanner-eigener Default ist 60) |
 | `quality-gate` | `auto` |
 | `blocking-refs` | `main` |
+| `reference-branch` | `main` |
 | `branch-name` | `""` (nutzt `github.ref_name`) |
 | `skip-actors` | `renovate[bot],dependabot[bot]` |
 | `cache` | `true` (`~/.sonar/cache`) |
@@ -69,10 +70,22 @@ Bedingung:      new_coverage = 69.0 ( LT 80 )   -> Gate FAILED
 gemessen:      new_lines_to_cover = 0, new_uncovered_lines = 0
 ```
 
-Bei null zu testenden neuen Zeilen kann die Bedingung nicht erfüllen; dieselbe Analyse als
+Bei null zu testenden neuen Zeilen kann die Bedingung nicht erfüllt werden; dieselbe Analyse als
 PR-Analyse meldet `PASSED`. Ein Blockieren auf solchen Branches erzeugt False-Positives, die
 Renovate-PRs unbegrenzt liegen lassen. Mit `quality-gate: block` erzwingt die Wartung das
 alte Verhalten zurück, mit `off` schaltet es ganz ab.
+
+### New-Code-Definition bei Branch-Analysen
+
+Branch-Analysen erhalten `-Dsonar.referenceBranch=<reference-branch>` (Default `main`), auf dem
+Referenz-Branch selbst entfällt der Parameter. Pull Requests brauchen ihn nicht, deren Referenz
+ist `sonar.pullrequest.base`.
+
+Ohne Referenz fällt SonarQube auf die zuletzt gemeldete Projektversion der Instanz zurück
+(`PREVIOUS_VERSION`). Damit wird alter Code aus `main` zum neuen Code des Vorschau-Branches —
+dieselbe Ursache wie die falsch bewerteten Gate-Bedingungen oben, und der Grund, warum mehrere
+Vorschau-Branches identische Kennzahlen melden. Mit `reference-branch: ""` lässt sich der
+Parameter abschalten, wenn die New-Code-Definition bewusst über `projectVersion` laufen soll.
 
 ## Secrets
 
