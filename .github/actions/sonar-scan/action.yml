@@ -23,14 +23,26 @@ inputs:
     description: Zusätzliche -D-Argumente für den Scanner.
     required: false
     default: ""
+  branch-name:
+    description: >
+      Wert für sonar.branch.name. Leer lässt den GitHub-Ref-Namen; nötig für Vorschau-Deployments,
+      die einen Slug statt des Branch-Namens melden.
+    required: false
+    default: ""
+  quality-gate:
+    description: >
+      auto blockiert nur bei Pull Requests und bei Refs aus blocking-refs; block wartet immer auf
+      das Quality Gate, off nie.
+    required: false
+    default: "auto"
+  blocking-refs:
+    description: Kommagetrennte Refs, deren Push-Läufe auf das Quality Gate warten.
+    required: false
+    default: "main"
   ws-timeout-seconds:
     description: Socket-Timeout des Scanners gegen SonarWeb in Sekunden. Der Scanner-Default von 60 s führt bei Aussetzern des Weges zum Runner zu roten Runs.
     required: false
     default: "180"
-  quality-gate-wait:
-    description: Auf das Quality Gate warten und bei FAIL fehlschlagen.
-    required: false
-    default: "true"
   skip:
     description: '"true" überspringt den Scan vollständig.'
     required: false
@@ -51,6 +63,9 @@ outputs:
   scanner-args:
     description: Die tatsächlich übergebenen Scanner-Argumente.
     value: ${{ steps.decide.outputs.scanner_args }}
+  quality-gate-wait:
+    description: '"true" wenn der Lauf auf das Quality Gate gewartet hat.'
+    value: ${{ steps.decide.outputs.quality_gate_wait }}
 
 runs:
   using: composite
@@ -68,9 +83,11 @@ runs:
         INPUT_SKIP: ${{ inputs.skip }}
         INPUT_SKIP_ACTORS: ${{ inputs.skip-actors }}
         INPUT_TIMEOUT: ${{ inputs.ws-timeout-seconds }}
-        INPUT_QUALITY_GATE_WAIT: ${{ inputs.quality-gate-wait }}
         INPUT_VERSION: ${{ inputs.project-version }}
         INPUT_ARGS: ${{ inputs.args }}
+        INPUT_BRANCH_NAME: ${{ inputs.branch-name }}
+        INPUT_QUALITY_GATE: ${{ inputs.quality-gate }}
+        INPUT_BLOCKING_REFS: ${{ inputs.blocking-refs }}
         INPUT_TOKEN: ${{ inputs.sonar-token }}
       run: |
         source "$GITHUB_ACTION_PATH/sonar-args.sh"
@@ -80,10 +97,19 @@ runs:
           exit 0
         fi
         require_token "$INPUT_TOKEN"
-        args="$(scanner_args "$EVENT_NAME" "$REF_NAME" "$PR_NUMBER" "$PR_HEAD" "$PR_BASE" \
-          "$INPUT_VERSION" "$INPUT_TIMEOUT" "$INPUT_QUALITY_GATE_WAIT" "$INPUT_ARGS")"
+        branch="$REF_NAME"
+        if [ "$EVENT_NAME" != "pull_request" ] && [ -n "$INPUT_BRANCH_NAME" ]; then
+          branch="$INPUT_BRANCH_NAME"
+        fi
+        gate_wait=false
+        if quality_gate_blocks "$EVENT_NAME" "$REF_NAME" "$INPUT_QUALITY_GATE" "$INPUT_BLOCKING_REFS"; then
+          gate_wait=true
+        fi
+        args="$(scanner_args "$EVENT_NAME" "$branch" "$PR_NUMBER" "$PR_HEAD" "$PR_BASE" \
+          "$INPUT_VERSION" "$INPUT_TIMEOUT" "$gate_wait" "$INPUT_ARGS")"
         echo "scanned=true" >> "$GITHUB_OUTPUT"
         echo "scanner_args=$args" >> "$GITHUB_OUTPUT"
+        echo "quality_gate_wait=$gate_wait" >> "$GITHUB_OUTPUT"
         echo "Scanner-Argumente: $args"
 
     - name: SonarQube-Scanner zwischenspeichern
