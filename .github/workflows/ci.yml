@@ -29,3 +29,64 @@ jobs:
 
       - name: Argument-Logik testen
         run: bash test/sonar-args.test.sh
+
+  # Release erst, wenn auf main actionlint, shellcheck und die Argument-Tests grün sind: Der
+  # Major-Tag wird sofort von allen Repos genutzt, die die Aktion mit @v1 einbinden.
+  release:
+    name: Version_taggen
+    needs: quality
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Abhängigkeiten installieren
+        run: pnpm install --frozen-lockfile
+
+      - name: semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm exec semantic-release
+
+      # semantic-release betrachtet einen gesetzten Tag als veröffentlicht. Scheitert der Lauf
+      # nach dem Tag-Setzen (beobachtet: remote rejected für refs/notes/semantic-release-*),
+      # bleibt ein Tag ohne GitHub-Release zurück und kein Folgellauf repariert das.
+      - name: GitHub-Release für Tag sicherstellen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force origin
+          version=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
+          if [ -z "$version" ]; then
+            exit 0
+          fi
+          if ! gh release view "$version" >/dev/null 2>&1; then
+            gh release create "$version" --target "$(git rev-parse HEAD)" --generate-notes --verify-tag
+            echo "GitHub-Release $version nachträglich angelegt"
+          fi
+
+      - name: Major-Tag nachziehen
+        run: |
+          set -euo pipefail
+          git fetch --tags --force origin
+          version=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
+          if [ -z "$version" ]; then
+            echo "Kein neuer Versions-Tag auf HEAD, Major-Tag bleibt unverändert."
+            exit 0
+          fi
+          major=${version%%.*}
+          git tag -f "$major"
+          git push -f origin "$major"
+          echo "Tag $major zeigt jetzt auf $version"
