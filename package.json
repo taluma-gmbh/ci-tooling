@@ -4,7 +4,7 @@
   "private": true,
   "description": "Wiederverwendbare GitHub-Actions für taluma-gmbh-Pipelines",
   "type": "module",
-  "packageManager": "pnpm@12.21.0",
+  "packageManager": "pnpm@12.22.0",
   "scripts": {
     "test": "bash test/sonar-args.test.sh"
   },
