@@ -1,3 +1,97 @@
 {
-  "extends": ["github>taluma-gmbh/renovate-config"]
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Kopie von taluma-gmbh/renovate-config (default.json). Das Repo ist oeffentlich und kann die private Vorlage nicht lesen; Aenderungen an der Vorlage hier nachziehen.",
+  "extends": [
+    "config:recommended",
+    ":rebaseStalePrs"
+  ],
+  "baseBranchPatterns": [
+    "main"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "dependencyDashboard": true,
+  "kubernetes": {
+    "managerFilePatterns": [
+      "/(^|/)(manifests|k8s|restore)/[^/]+\\.ya?ml$/"
+    ]
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "automerge": false,
+    "dependencyDashboardApproval": false,
+    "minimumReleaseAge": null,
+    "prCreation": "immediate",
+    "schedule": [],
+    "labels": [
+      "security",
+      "dependencies"
+    ],
+    "reviewers": [
+      "team:renovate-reviewer"
+    ]
+  },
+  "packageRules": [
+    {
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "automerge": true,
+      "automergeStrategy": "squash",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "matchDepTypes": [
+        "devDependencies"
+      ],
+      "automerge": true,
+      "automergeStrategy": "squash",
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false,
+      "labels": [
+        "MAJOR-UPDATE"
+      ],
+      "reviewers": [
+        "team:renovate-reviewer"
+      ],
+      "minimumReleaseAge": "21 days"
+    },
+    {
+      "description": "Datenbanken: Eine neue Hauptversion braucht Dump und Restore. Nur im Dependency Dashboard anbieten, PR erst auf Klick.",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "postgres",
+        "mysql",
+        "mariadb"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "GitHub Actions",
+      "enabled": true
+    }
+  ],
+  "timezone": "Europe/Berlin",
+  "schedule": [
+    "after 10pm every weekday",
+    "before 5am every weekday",
+    "every weekend"
+  ],
+  "platformAutomerge": true
 }
